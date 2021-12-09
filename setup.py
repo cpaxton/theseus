@@ -37,6 +37,14 @@ if "CUDA_HOME" in os.environ:
             ],
             libraries=["cusolver"],
         ),
+        torch_cpp_ext.CUDAExtension(
+            name="theseus.extlib.cusolver_qr_solver",
+            sources=[
+                "theseus/extlib/cusolver_qr_solver.cpp",
+                "theseus/extlib/cusolver_sp_defs.cpp",
+            ],
+            libraries=["cusolver"],
+        ),
     ]
 else:
     ext_modules = []

@@ -386,7 +386,7 @@ for i in range(len(l.worldPoints)):
 # Create optimizer
 optimizer = th.LevenbergMarquardt(  # GaussNewton(
     objective,
-    max_iterations=10,
+    max_iterations=11,
     step_size=0.5,
 )
 
@@ -453,15 +453,9 @@ with torch.autograd.detect_anomaly():
             # print(theseus_inputs['lossRadius'])
 
             # print("IN:", theseus_inputs)
-            try:
-                theseus_outputs, info = theseus_optim.forward(
-                    theseus_inputs
-                    # , optimizer_kwargs={"verbose":True}
-                )
-                # print('OK!')
-            except:
-                print("SKIP! error in forward...")
-                continue
+            theseus_outputs, info = theseus_optim.forward(
+                theseus_inputs, optimizer_kwargs={"verbose": True}
+            )
             # print("OUT:", updated_inputs)
 
             # objective.update(updated_inputs)
@@ -472,21 +466,24 @@ with torch.autograd.detect_anomaly():
             loss = torch.norm(
                 10 * gtCamRot.data - theseus_outputs["camRot"], dim=(1, 2), p=1
             ) + torch.norm(gtCamTr.data - theseus_outputs["camTr"], dim=1, p=1)
+            loss = torch.where(loss < 10e5, loss, 0.0).sum()
             # Step 2.3: PyTorch backpropagation
             # print(loss)
             # print(loss < 10e5)
 
             # print('LOSS:', loss)
             # print("OK:", loss < 10e5)
-            lossShape = loss.shape
-            lossOk = loss < 10e5
-            loss = loss[lossOk]
-            if loss.shape != lossShape:
-                print("LOK:", lossOk)
-            loss.backward(torch.ones(loss.shape))
+            # lossShape = loss.shape
+            # print(loss.detach().max())
+            # lossOk = loss < 10e5
+            # loss = loss[lossOk]
+            # if loss.shape != lossShape:
+            #     print("LOK:", lossOk)
+            # loss.backward(torch.ones(loss.shape))
+            loss.backward()
             model_optimizer.step()
 
-            loss_value = torch.sum(loss).item()
+            loss_value = torch.sum(loss.detach()).item()
             epoch_loss += loss_value
 
             # print(f"[{epoch}] Radius: exp({lossRadius_tensor.data.item()})={torch.exp(lossRadius_tensor.data).item()}")

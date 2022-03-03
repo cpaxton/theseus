@@ -14,7 +14,7 @@ from .point_types import Point3
 
 
 class SO3(LieGroup):
-    SO3_EPS = 5e-7
+    SO3_EPS = 5e-6
 
     def __init__(
         self,
@@ -86,7 +86,7 @@ class SO3(LieGroup):
     def exp_map(tangent_vector: torch.Tensor) -> LieGroup:
         if tangent_vector.ndim != 2 or tangent_vector.shape[1] != 3:
             raise ValueError("Invalid input for SO3.exp_map.")
-        ret = SO3(dtype=tangent_vector.dtype)
+        # ret = SO3(dtype=tangent_vector.dtype)
         theta = torch.linalg.norm(tangent_vector, dim=1, keepdim=True).unsqueeze(1)
         theta2 = theta**2
         # Compute the approximations when theta ~ 0
@@ -103,22 +103,22 @@ class SO3(LieGroup):
         one_minus_cosie_by_theta2 = torch.where(
             small_theta, 0.5 * sine_by_theta, (1 - cosine) / theta2_nz
         )
-        ret.data = (
+        aux = (
             one_minus_cosie_by_theta2
             * tangent_vector.view(-1, 3, 1)
             @ tangent_vector.view(-1, 1, 3)
         )
-        ret[:, 0, 0] += cosine.view(-1)
-        ret[:, 1, 1] += cosine.view(-1)
-        ret[:, 2, 2] += cosine.view(-1)
+        aux[:, 0, 0] = aux[:, 0, 0] + cosine.view(-1).clone()
+        aux[:, 1, 1] = aux[:, 1, 1] + cosine.view(-1).clone()
+        aux[:, 2, 2] = aux[:, 2, 2] + cosine.view(-1).clone()
         temp = sine_by_theta.view(-1, 1) * tangent_vector
-        ret[:, 0, 1] -= temp[:, 2]
-        ret[:, 1, 0] += temp[:, 2]
-        ret[:, 0, 2] += temp[:, 1]
-        ret[:, 2, 0] -= temp[:, 1]
-        ret[:, 1, 2] -= temp[:, 0]
-        ret[:, 2, 1] += temp[:, 0]
-        return ret
+        aux[:, 0, 1] = aux[:, 0, 1] - temp[:, 2].clone()
+        aux[:, 1, 0] = aux[:, 1, 0] + temp[:, 2].clone()
+        aux[:, 0, 2] = aux[:, 0, 2] + temp[:, 1].clone()
+        aux[:, 2, 0] = aux[:, 2, 0] - temp[:, 1].clone()
+        aux[:, 1, 2] = aux[:, 1, 2] - temp[:, 0].clone()
+        aux[:, 2, 1] = aux[:, 2, 1] + temp[:, 0].clone()
+        return SO3(data=aux, dtype=tangent_vector.dtype)
 
     def _log_map_impl(self) -> torch.Tensor:
         ret = torch.zeros(self.shape[0], 3, dtype=self.dtype, device=self.device)

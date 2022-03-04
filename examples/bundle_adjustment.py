@@ -10,7 +10,7 @@ torch.manual_seed(0)
 def random_S2():
     theta = torch.rand(()) * math.tau
     z = torch.rand(()) * 2 - 1
-    r = torch.sqrt(1 - z**2)
+    r = torch.sqrt(1 - z ** 2)
     return torch.tensor([r * torch.cos(theta), r * torch.sin(theta), z]).double()
 
 
@@ -84,10 +84,8 @@ class ReprojErr(th.CostFunction):
         self.worldPoint = worldPoint
         self.imageFeaturePoint = imageFeaturePoint
 
-        self.register_optim_vars(["camRot", "camTr"])
-        self.register_aux_vars(
-            ["lossRadius", "focalLength", f"worldPoint", f"imageFeaturePoint"]
-        )
+        self.register_optim_vars(["camRot", "camTr", "worldPoint"])
+        self.register_aux_vars(["lossRadius", "focalLength", "imageFeaturePoint"])
 
     def error(self) -> torch.Tensor:
         camObsPoint = self.camRot.rotate(self.worldPoint) + self.camTr
@@ -174,7 +172,7 @@ class ReprojErr(th.CostFunction):
         )
 
 
-if not False:
+if False:
     camRot = th.SO3(
         torch.cat(
             [randomSmallQuaternion(max_degrees=20).unsqueeze(0) for _ in range(4)]
@@ -386,8 +384,8 @@ for i in range(len(l.worldPoints)):
 # Create optimizer
 optimizer = th.LevenbergMarquardt(  # GaussNewton(
     objective,
-    max_iterations=11,
-    step_size=0.5,
+    max_iterations=10,
+    step_size=0.3,
 )
 
 # Set up Theseus layer
@@ -396,8 +394,8 @@ theseus_optim = th.TheseusLayer(optimizer)
 
 # Create dataset
 # NOTE: composition of SO3 rotations is often not a valid rotation (.copy fails)
-loc_samples = [LocalizationSample() for _ in range(1024)]
-batch_size = 128
+loc_samples = [LocalizationSample() for _ in range(16)]
+batch_size = 4
 num_batches = (len(loc_samples) + batch_size - 1) // batch_size
 
 
@@ -436,58 +434,58 @@ model_optimizer = torch.optim.Adam([lossRadius_tensor], lr=0.1)
 # print(f"Initial a value: {a_tensor.item()}")
 
 num_epochs = 100
-import torch.autograd
 
-with torch.autograd.detect_anomaly():
-    for epoch in range(num_epochs):
-        print(" ******************* EPOCH {epoch} ******************* ")
-        epoch_loss = 0.0
-        epoch_b = []  # keep track of the current b values for each model in this epoch
-        for i in range(num_batches):
-            print(f"BATCH {i}/{num_batches}")
-            model_optimizer.zero_grad()
-            theseus_inputs, gtCamRot, gtCamTr = get_batch(i)
-            theseus_inputs["lossRadius"] = lossRadius_tensor.repeat(
-                gtCamTr.data.shape[0]
-            ).unsqueeze(1)
-            # print(theseus_inputs['lossRadius'])
+for epoch in range(num_epochs):
+    print(" ******************* EPOCH {epoch} ******************* ")
+    epoch_loss = 0.0
+    epoch_b = []  # keep track of the current b values for each model in this epoch
+    for i in range(num_batches):
+        print(f"BATCH {i}/{num_batches}")
+        model_optimizer.zero_grad()
+        theseus_inputs, gtCamRot, gtCamTr = get_batch(i)
+        theseus_inputs["lossRadius"] = lossRadius_tensor.repeat(
+            gtCamTr.data.shape[0]
+        ).unsqueeze(1)
+        # print(theseus_inputs['lossRadius'])
 
-            # print("IN:", theseus_inputs)
-            theseus_outputs, info = theseus_optim.forward(
-                theseus_inputs, optimizer_kwargs={"verbose": True}
-            )
-            # print("OUT:", updated_inputs)
-
-            # objective.update(updated_inputs)
-            # print(gtCamRot.data.shape)
-            # print(updated_inputs['camRot'].data.shape)
-            # print(gtCamTr.data.shape)
-            # print(updated_inputs['camTr'].data.shape)
-            loss = torch.norm(
-                10 * gtCamRot.data - theseus_outputs["camRot"], dim=(1, 2), p=1
-            ) + torch.norm(gtCamTr.data - theseus_outputs["camTr"], dim=1, p=1)
-            loss = torch.where(loss < 10e5, loss, 0.0).sum()
-            # Step 2.3: PyTorch backpropagation
-            # print(loss)
-            # print(loss < 10e5)
-
-            # print('LOSS:', loss)
-            # print("OK:", loss < 10e5)
-            # lossShape = loss.shape
-            # print(loss.detach().max())
-            # lossOk = loss < 10e5
-            # loss = loss[lossOk]
-            # if loss.shape != lossShape:
-            #     print("LOK:", lossOk)
-            # loss.backward(torch.ones(loss.shape))
-            loss.backward()
-            model_optimizer.step()
-
-            loss_value = torch.sum(loss.detach()).item()
-            epoch_loss += loss_value
-
-            # print(f"[{epoch}] Radius: exp({lossRadius_tensor.data.item()})={torch.exp(lossRadius_tensor.data).item()}")
-            # print("RAD:", lossRadius_tensor.data.item())
-        print(
-            f"Epoch: {epoch} Loss: {epoch_loss} Kernel Radius: exp({lossRadius_tensor.data.item()})={torch.exp(lossRadius_tensor.data).item()}"
+        # print("IN:", theseus_inputs)
+        theseus_outputs, info = theseus_optim.forward(
+            theseus_inputs, optimizer_kwargs={"verbose": True}
         )
+        # print("OUT:", updated_inputs)
+
+        # objective.update(updated_inputs)
+        # print(gtCamRot.data.shape)
+        # print(updated_inputs['camRot'].data.shape)
+        # print(gtCamTr.data.shape)
+        # print(updated_inputs['camTr'].data.shape)
+        loss = torch.norm(
+            10 * gtCamRot.data - theseus_outputs["camRot"], dim=(1, 2), p=1
+        ) + torch.norm(gtCamTr.data - theseus_outputs["camTr"], dim=1, p=1)
+        loss = torch.where(loss < 10e5, loss, 0.0).sum()
+        # Step 2.3: PyTorch backpropagation
+        # print(loss)
+        # print(loss < 10e5)
+
+        # print('LOSS:', loss)
+        # print("OK:", loss < 10e5)
+        # lossShape = loss.shape
+        # print(loss.detach().max())
+        # lossOk = loss < 10e5
+        # loss = loss[lossOk]
+        # if loss.shape != lossShape:
+        #     print("LOK:", lossOk)
+        # loss.backward(torch.ones(loss.shape))
+        loss.backward()
+        model_optimizer.step()
+
+        loss_value = torch.sum(loss.detach()).item()
+        epoch_loss += loss_value
+
+        # print(f"[{epoch}] Radius: exp({lossRadius_tensor.data.item()})={torch.exp(lossRadius_tensor.data).item()}")
+        # print("RAD:", lossRadius_tensor.data.item())
+    print(
+        f"Epoch: {epoch} Loss: {epoch_loss} "
+        f"Kernel Radius: exp({lossRadius_tensor.data.item()})="
+        f"{torch.exp(lossRadius_tensor.data).item()}"
+    )

@@ -44,6 +44,28 @@ class LieGroup(Manifold):
     def dof(self) -> int:
         pass
 
+    @staticmethod
+    @abc.abstractmethod
+    def rand(
+        *size: int,
+        generator: Optional[torch.Generator] = None,
+        dtype: Optional[torch.dtype] = None,
+        device: Optional[torch.device] = None,
+        requires_grad: bool = False,
+    ) -> "LieGroup":
+        pass
+
+    @staticmethod
+    @abc.abstractmethod
+    def randn(
+        *size: int,
+        generator: Optional[torch.Generator] = None,
+        dtype: Optional[torch.dtype] = None,
+        device: Optional[torch.device] = None,
+        requires_grad: bool = False,
+    ) -> "LieGroup":
+        pass
+
     def __str__(self) -> str:
         return repr(self)
 
@@ -65,6 +87,22 @@ class LieGroup(Manifold):
 
     def adjoint(self) -> torch.Tensor:
         return self._adjoint_impl()
+
+    def _project_check(self, euclidean_grad: torch.Tensor, is_sparse: bool = False):
+        if euclidean_grad.dtype != self.dtype:
+            raise ValueError(
+                "Euclidean gradients must be of the same type as the Lie group."
+            )
+
+        if euclidean_grad.device != self.device:
+            raise ValueError(
+                "Euclidean gradients must be on the same device as the Lie group."
+            )
+
+        if euclidean_grad.shape[-self.ndim + is_sparse :] != self.shape[is_sparse:]:
+            raise ValueError(
+                "Euclidean gradients must have consistent shapes with the Lie group."
+            )
 
     def between(
         self, variable2: "LieGroup", jacobians: Optional[List[torch.Tensor]] = None

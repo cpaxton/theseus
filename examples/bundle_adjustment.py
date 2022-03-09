@@ -84,8 +84,10 @@ class ReprojErr(th.CostFunction):
         self.worldPoint = worldPoint
         self.imageFeaturePoint = imageFeaturePoint
 
-        self.register_optim_vars(["camRot", "camTr", "worldPoint"])
-        self.register_aux_vars(["lossRadius", "focalLength", "imageFeaturePoint"])
+        self.register_optim_vars(["camRot", "camTr"])
+        self.register_aux_vars(
+            ["lossRadius", "focalLength", "imageFeaturePoint", "worldPoint"]
+        )
 
     def error(self) -> torch.Tensor:
         camObsPoint = self.camRot.rotate(self.worldPoint) + self.camTr
@@ -429,12 +431,14 @@ def get_batch(b):
 
 # Outer optimization loop
 lossRadius_tensor = torch.nn.Parameter(torch.tensor([-3], dtype=torch.float64))
-model_optimizer = torch.optim.Adam([lossRadius_tensor], lr=0.1)
+model_optimizer = torch.optim.Adam([lossRadius_tensor], lr=1.0)
 
 # print(f"Initial a value: {a_tensor.item()}")
 
 num_epochs = 100
 
+camRotVar = theseus_optim.objective.optim_vars["camRot"]
+camTrVar = theseus_optim.objective.optim_vars["camTr"]
 for epoch in range(num_epochs):
     print(" ******************* EPOCH {epoch} ******************* ")
     epoch_loss = 0.0
@@ -446,44 +450,21 @@ for epoch in range(num_epochs):
         theseus_inputs["lossRadius"] = lossRadius_tensor.repeat(
             gtCamTr.data.shape[0]
         ).unsqueeze(1)
-        # print(theseus_inputs['lossRadius'])
 
-        # print("IN:", theseus_inputs)
         theseus_outputs, info = theseus_optim.forward(
-            theseus_inputs, optimizer_kwargs={"verbose": True}
+            theseus_inputs, optimizer_kwargs={"verbose": False}
         )
-        # print("OUT:", updated_inputs)
 
-        # objective.update(updated_inputs)
-        # print(gtCamRot.data.shape)
-        # print(updated_inputs['camRot'].data.shape)
-        # print(gtCamTr.data.shape)
-        # print(updated_inputs['camTr'].data.shape)
-        loss = torch.norm(
-            10 * gtCamRot.data - theseus_outputs["camRot"], dim=(1, 2), p=1
-        ) + torch.norm(gtCamTr.data - theseus_outputs["camTr"], dim=1, p=1)
+        cam_rot_loss = th.local(camRotVar, gtCamRot).norm(dim=1)
+        cam_tr_loss = th.local(camTrVar, gtCamTr).norm(dim=1, p=1)
+        loss = (100 * cam_rot_loss + cam_tr_loss)
         loss = torch.where(loss < 10e5, loss, 0.0).sum()
-        # Step 2.3: PyTorch backpropagation
-        # print(loss)
-        # print(loss < 10e5)
-
-        # print('LOSS:', loss)
-        # print("OK:", loss < 10e5)
-        # lossShape = loss.shape
-        # print(loss.detach().max())
-        # lossOk = loss < 10e5
-        # loss = loss[lossOk]
-        # if loss.shape != lossShape:
-        #     print("LOK:", lossOk)
-        # loss.backward(torch.ones(loss.shape))
         loss.backward()
         model_optimizer.step()
 
         loss_value = torch.sum(loss.detach()).item()
         epoch_loss += loss_value
 
-        # print(f"[{epoch}] Radius: exp({lossRadius_tensor.data.item()})={torch.exp(lossRadius_tensor.data).item()}")
-        # print("RAD:", lossRadius_tensor.data.item())
     print(
         f"Epoch: {epoch} Loss: {epoch_loss} "
         f"Kernel Radius: exp({lossRadius_tensor.data.item()})="

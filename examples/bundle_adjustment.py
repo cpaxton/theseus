@@ -10,7 +10,7 @@ torch.manual_seed(0)
 def random_S2():
     theta = torch.rand(()) * math.tau
     z = torch.rand(()) * 2 - 1
-    r = torch.sqrt(1 - z ** 2)
+    r = torch.sqrt(1 - z**2)
     return torch.tensor([r * torch.cos(theta), r * torch.sin(theta), z]).double()
 
 
@@ -457,7 +457,7 @@ for epoch in range(num_epochs):
 
         cam_rot_loss = th.local(camRotVar, gtCamRot).norm(dim=1)
         cam_tr_loss = th.local(camTrVar, gtCamTr).norm(dim=1, p=1)
-        loss = (100 * cam_rot_loss + cam_tr_loss)
+        loss = 100 * cam_rot_loss + cam_tr_loss
         loss = torch.where(loss < 10e5, loss, 0.0).sum()
         loss.backward()
         model_optimizer.step()

@@ -35,8 +35,8 @@ class TactilePoseEstimator:
         # poses over time.
         obj_poses, eff_poses = [], []
         for i in range(self.time_steps):
-            obj_poses.append(th.SE2(name=f"obj_pose_{i}", dtype=torch.double))
-            eff_poses.append(th.SE2(name=f"eff_pose_{i}", dtype=torch.double))
+            obj_poses.append(th.SE2(name=f"obj_pose_{i}"))
+            eff_poses.append(th.SE2(name=f"eff_pose_{i}"))
 
         # -------------------------------------------------------------------- #
         # Creating auxiliary variables
@@ -63,9 +63,9 @@ class TactilePoseEstimator:
             ):
                 nn_measurements.append(th.SE2(name=f"nn_measurement_{i-offset}_{i}"))
 
-        sdf_data = th.Variable(dataset.sdf_data_tensor, name="sdf_data")
-        sdf_cell_size = th.Variable(dataset.sdf_cell_size, name="sdf_cell_size")
-        sdf_origin = th.Variable(dataset.sdf_origin, name="sdf_origin")
+        sdf_data = th.Variable(dataset.sdf_data_tensor.float(), name="sdf_data")
+        sdf_cell_size = th.Variable(dataset.sdf_cell_size.float(), name="sdf_cell_size")
+        sdf_origin = th.Variable(dataset.sdf_origin.float(), name="sdf_origin")
         eff_radius = th.Variable(torch.zeros(1, 1), name="eff_radius")
 
         # -------------------------------------------------------------------- #
@@ -178,7 +178,7 @@ class TactilePoseEstimator:
 
         if regularization_w > 0.0:
             reg_w = th.ScaleCostWeight(np.sqrt(regularization_w))
-            reg_w.to(dtype=torch.double)
+            reg_w.to(dtype=torch.float)
             identity_se2 = th.SE2(name="identity")
             for pose_list in [obj_poses, eff_poses]:
                 for pose in pose_list:
@@ -201,7 +201,7 @@ class TactilePoseEstimator:
             step_size=step_size,
         )
         self.theseus_layer = th.TheseusLayer(nl_optimizer)
-        self.theseus_layer.to(device=device, dtype=torch.double)
+        self.theseus_layer.to(device=device)
 
         self.forward = self.theseus_layer.forward
 

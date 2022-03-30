@@ -34,7 +34,6 @@ logger = logging.getLogger(__name__)
 #   cd ..
 #   python examples/tactile_pose_estimation.py
 EXP_PATH = pathlib.Path.cwd() / "expts" / "tactile-pushing"
-torch.set_default_dtype(torch.double)
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 seed = 0
@@ -150,7 +149,7 @@ def run_learning_loop(cfg):
     results = {}
     for epoch in range(cfg.train.num_epochs):
         results[epoch] = {}
-        logger.info(f" ********************* EPOCH f{epoch} *********************")
+        logger.info(f" ********************* EPOCH {epoch} *********************")
         losses = []
         image_idx = 0
         for batch_idx, batch in enumerate(measurements):
@@ -264,7 +263,6 @@ def run_learning_loop(cfg):
 
 @hydra.main(config_path="./configs/", config_name="tactile_pose_estimation")
 def main(cfg):
-    torch.set_default_dtype(torch.double)
     torch.manual_seed(cfg.seed)
     random.seed(cfg.seed)
     np.random.seed(cfg.seed)

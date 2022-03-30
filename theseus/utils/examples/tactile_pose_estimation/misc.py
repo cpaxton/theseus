@@ -19,6 +19,7 @@ class TactilePushingDataset:
         batch_size: int,
         max_episodes: int,
         device: torch.device,
+        dtype: torch.dtype = torch.float,
     ):
         batch_size = min(batch_size, max_episodes)
         data = TactilePushingDataset._load_dataset_from_file(
@@ -29,6 +30,9 @@ class TactilePushingDataset:
             self.sdf_cell_size,
             self.sdf_origin,
         ) = TactilePushingDataset._load_tactile_sdf_from_file(sdf_fname, device)
+        self.sdf_data_tensor = self.sdf_data_tensor.to(dtype=dtype)
+        self.sdf_cell_size = self.sdf_cell_size.to(dtype=dtype)
+        self.sdf_origin = self.sdf_origin.to(dtype=dtype)
 
         self.img_feats = data["img_feats"]
         self.eff_poses = data["eff_poses"]

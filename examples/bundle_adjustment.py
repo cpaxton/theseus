@@ -124,10 +124,15 @@ def run(cfg: omegaconf.OmegaConf, results_path: pathlib.Path):
             focal_length=cam.focal_length,
             calib_k1=cam.calib_k1,
             calib_k2=cam.calib_k2,
-            log_loss_radius=log_loss_radius,
             image_feature_point=obs.image_feature_point,
         )
-        objective.add(cost_function)
+        robust_cost_function = th.ex.RobustCostFunction(
+            cost_function,
+            th.ex.HuberLoss,
+            log_loss_radius,
+            name=f"robust_{cost_function.name}",
+        )
+        objective.add(robust_cost_function)
     dtype = objective.dtype
 
     # Add regularization

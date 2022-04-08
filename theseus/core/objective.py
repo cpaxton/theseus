@@ -230,35 +230,24 @@ class Objective:
         self.cost_functions_for_weights[cost_function.weight].append(cost_function)
 
         if group_name is None:
-            group_name = f"ungrouped__{self._ungrouped_ids}"
-            next(self._ungrouped_ids)
-
+            group_name = f"ungrouped__{next(self._ungrouped_ids)}"
         if group_name not in self.grouped_cost_functions:
             batch_cost_function = cost_function.copy(
                 group_name + "__batch_cost_function"
             )
             batch_cost_function.weight = None
 
-            batch_sizes = []
-
             for var_attr_name in batch_cost_function._optim_vars_attr_names:
                 batch_variable = cast(
                     Variable, getattr(batch_cost_function, var_attr_name)
                 )
                 batch_variable.name = cost_function.name + "__" + var_attr_name
-                batch_sizes.append(batch_variable.data.shape[0])
 
             for var_attr_name in batch_cost_function._aux_vars_attr_names:
                 batch_variable = cast(
                     Variable, getattr(batch_cost_function, var_attr_name)
                 )
                 batch_variable.name = cost_function.name + "__" + var_attr_name
-                batch_sizes.append(batch_variable.data.shape[0])
-
-            unique_batch_sizes = set(batch_sizes)
-
-            if len(unique_batch_sizes) != 1:
-                raise ValueError("Provided cost function can not be batched.")
 
             self.grouped_cost_functions[group_name] = (
                 batch_cost_function,
@@ -363,32 +352,12 @@ class Objective:
                 del self.cost_functions_for_weights[cost_weight]
 
             group_name = self.group_names_for_cost_functions[name]
-            batch_cost_function, cost_functions = self.grouped_cost_functions[
-                group_name
-            ]
+            _, cost_functions = self.grouped_cost_functions[group_name]
 
             cost_fn_idx = cost_functions.index(cost_function)
             del cost_functions[cost_fn_idx]
-
             if len(cost_functions) == 0:
                 del self.grouped_cost_functions[group_name]
-            else:
-                for var_name in batch_cost_function._optim_vars_attr_names:
-                    var = cast(Variable, getattr(cost_function, var_name))
-                    var_data = [
-                        cast(Variable, getattr(cost_function, var_name)).data
-                        for cost_function in cost_functions
-                    ]
-                    var.data = torch.cat(var_data, dim=0)
-
-                for var_name in batch_cost_function._aux_vars_attr_names:
-                    var = cast(Variable, getattr(cost_function, var_name))
-                    var_data = [
-                        cast(Variable, getattr(cost_function, var_name)).data
-                        for cost_function in cost_functions
-                    ]
-                    var.data = torch.cat(var_data, dim=0)
-
             del self.group_names_for_cost_functions[name]
 
             # finally, delete the cost function

@@ -69,3 +69,4 @@ from .optimizer.nonlinear import (
 from .theseus_layer import TheseusLayer
 
 import theseus.embodied as eb
+import theseus.experimental as ex

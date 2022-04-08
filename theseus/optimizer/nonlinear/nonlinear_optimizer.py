@@ -220,6 +220,10 @@ class NonlinearOptimizer(Optimizer, abc.ABC):
     ) -> NonlinearOptimizerInfo:
         converged_indices = torch.zeros_like(info.last_err).bool()
         for it_ in range(start_iter, start_iter + num_iter):
+            # consolidate batches
+            self.objective.consolidate_group_batches(
+                only_optim_vars=it_ == 0 and not truncated_grad_loop
+            )
             # do optimizer step
             self.linear_solver.linearization.linearize()
             try:

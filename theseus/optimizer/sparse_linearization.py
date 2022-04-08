@@ -38,38 +38,43 @@ class SparseLinearization(Linearization):
         cost_function_row_block_starts = []  # where data start for this row block
         cost_function_stride = []  # total jacobian cols
 
-        for _, cost_function in enumerate(self.objective):
-            num_rows = cost_function.dim()
-            col_slices_indices = []
-            for var_idx_in_cost_function, variable in enumerate(
-                cost_function.optim_vars
-            ):
-                var_idx_in_order = self.ordering.index_of(
-                    cost_function.optim_var_at(var_idx_in_cost_function).name
+        # loop in order cost function group --> cost function, so that block
+        # pointers indices are consistent with the actual linearization order
+        for (_, cost_functions) in self.objective.grouped_cost_functions.values():
+            for cost_function in cost_functions:
+                num_rows = cost_function.dim()
+                col_slices_indices = []
+                for var_idx_in_cost_function, variable in enumerate(
+                    cost_function.optim_vars
+                ):
+                    var_idx_in_order = self.ordering.index_of(
+                        cost_function.optim_var_at(var_idx_in_cost_function).name
+                    )
+                    var_start_col = self.var_start_cols[var_idx_in_order]
+                    num_cols = variable.dof()
+                    col_slice = slice(var_start_col, var_start_col + num_cols)
+                    col_slices_indices.append((col_slice, var_idx_in_cost_function))
+
+                # sort according to how they will be written inside A
+                col_slices_indices.sort()
+                sorted_block_sizes = [(s.stop - s.start) for s, _ in col_slices_indices]
+                sorted_block_pointers = np.cumsum([0] + sorted_block_sizes)[:-1]
+                sorted_indices = np.array([i for _, i in col_slices_indices])
+                block_pointers: np.ndarray = np.ndarray(
+                    (len(col_slices_indices),), dtype=int
                 )
-                var_start_col = self.var_start_cols[var_idx_in_order]
-                num_cols = variable.dof()
-                col_slice = slice(var_start_col, var_start_col + num_cols)
-                col_slices_indices.append((col_slice, var_idx_in_cost_function))
+                block_pointers[sorted_indices] = sorted_block_pointers
+                cost_function_block_pointers.append(block_pointers)
 
-            # sort according to how they will be written inside A
-            col_slices_indices.sort()
-            sorted_block_sizes = [(s.stop - s.start) for s, _ in col_slices_indices]
-            sorted_block_pointers = np.cumsum([0] + sorted_block_sizes)[:-1]
-            sorted_indices = np.array([i for _, i in col_slices_indices])
-            block_pointers: np.ndarray = np.ndarray(
-                (len(col_slices_indices),), dtype=int
-            )
-            block_pointers[sorted_indices] = sorted_block_pointers
-            cost_function_block_pointers.append(block_pointers)
+                cost_function_row_block_starts.append(len(A_col_ind))
+                col_ind = [
+                    c for s, _ in col_slices_indices for c in range(s.start, s.stop)
+                ]
+                cost_function_stride.append(len(col_ind))
 
-            cost_function_row_block_starts.append(len(A_col_ind))
-            col_ind = [c for s, _ in col_slices_indices for c in range(s.start, s.stop)]
-            cost_function_stride.append(len(col_ind))
-
-            for _ in range(num_rows):
-                A_col_ind += col_ind
-                A_row_ptr.append(len(A_col_ind))
+                for _ in range(num_rows):
+                    A_col_ind += col_ind
+                    A_row_ptr.append(len(A_col_ind))
 
         # not batched, these data are the same across batches
         self.cost_function_block_pointers = cost_function_block_pointers
@@ -101,28 +106,49 @@ class SparseLinearization(Linearization):
         )
 
         err_row_idx = 0
-        for f_idx, cost_function in enumerate(self.objective):
-            jacobians, error = cost_function.weighted_jacobians_error()
-            num_rows = cost_function.dim()
-            row_slice = slice(err_row_idx, err_row_idx + num_rows)
+        f_idx = 0
+        batch_size = self.objective.batch_size
+        for (
+            batch_cost_function,
+            cost_functions,
+        ) in self.objective.grouped_cost_functions.values():
+            (
+                batch_jacobians,
+                batch_errors,
+            ) = batch_cost_function.weighted_jacobians_error()
+            # TODO: Implement FuncTorch
+            batch_pos = 0
+            for cost_function in cost_functions:
+                # get the cost function jacobian/error slices from the batch
+                jacobians = [
+                    jacobian[batch_pos : batch_pos + batch_size]
+                    for jacobian in batch_jacobians
+                ]
+                error = batch_errors[batch_pos : batch_pos + batch_size]
+                batch_pos += batch_size
 
-            # we will view the blocks of rows inside `A_val` as `num_rows` x `stride` matrix
-            block_start = self.cost_function_row_block_starts[f_idx]
-            stride = self.cost_function_stride[f_idx]
-            block = self.A_val[:, block_start : block_start + stride * num_rows].view(
-                -1, num_rows, stride
-            )
-            block_pointers = self.cost_function_block_pointers[f_idx]
+                num_rows = cost_function.dim()
+                row_slice = slice(err_row_idx, err_row_idx + num_rows)
 
-            for var_idx_in_cost_function, var_jacobian in enumerate(jacobians):
+                # we will view the blocks of rows inside `A_val` as
+                # `num_rows` x `stride` matrix
+                block_start = self.cost_function_row_block_starts[f_idx]
+                stride = self.cost_function_stride[f_idx]
+                block = self.A_val[
+                    :, block_start : block_start + stride * num_rows
+                ].view(-1, num_rows, stride)
+                block_pointers = self.cost_function_block_pointers[f_idx]
 
-                # the proper block is written, using the precomputed index in `block_pointers`
-                num_cols = var_jacobian.shape[2]
-                pointer = block_pointers[var_idx_in_cost_function]
-                block[:, :, pointer : pointer + num_cols] = var_jacobian
+                for var_idx_in_cost_function, var_jacobian in enumerate(jacobians):
+                    # the proper block is written, using the precomputed
+                    # index in `block_pointers`
+                    num_cols = var_jacobian.shape[2]
+                    pointer = block_pointers[var_idx_in_cost_function]
+                    block[:, :, pointer : pointer + num_cols] = var_jacobian
 
-            self.b[:, row_slice] = -error
-            err_row_idx += cost_function.dim()
+                self.b[:, row_slice] = -error
+                err_row_idx += cost_function.dim()
+                f_idx += 1
 
     def structure(self):
         return SparseStructure(

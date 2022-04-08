@@ -5,16 +5,17 @@
 
 import warnings
 from collections import OrderedDict
-from typing import Dict, List, Optional, Sequence, Union
+from itertools import count
+from typing import Dict, List, Optional, Sequence, Tuple, Union, cast
 
 import torch
 
 from theseus.core.theseus_function import TheseusFunction
+from theseus.core.variable import Variable
 from theseus.geometry.manifold import Manifold
 
 from .cost_function import CostFunction
 from .cost_weight import CostWeight
-from .variable import Variable
 
 
 # If dtype is None, uses torch.get_default_dtype()
@@ -40,6 +41,17 @@ class Objective:
         # this is used when deleting cost function to check if the cost weight
         # variables can be deleted as well (when no other function uses them)
         self.cost_functions_for_weights: Dict[CostWeight, List[CostFunction]] = {}
+
+        # maps cost function group names to the corresponding grouped cost functions
+        self.grouped_cost_functions: OrderedDict[
+            str, Tuple[CostFunction, List[CostFunction]]
+        ] = OrderedDict()
+
+        # maps grouped cost function names to their group names
+        self.group_names_for_cost_functions: OrderedDict[str, str] = OrderedDict()
+
+        # used to assign default names to ungrouped cost functions
+        self._ungrouped_ids = count(0)
 
         # ---- The following two methods are used just to get info from
         # ---- the objective, they don't affect the optimization logic.
@@ -110,6 +122,49 @@ class Objective:
             # add to list of functions connected to this variable
             self_var_to_fn_map[variable].append(function)
 
+    def _add_grouped_cost_function_variables(
+        self, cost_function: CostFunction, group_name: str, optim_vars: bool = True
+    ):
+        batch_cost_function, cost_functions = self.grouped_cost_functions[group_name]
+        original_cost_function = cost_functions[0]
+
+        if cost_function.__class__ != batch_cost_function.__class__:
+            raise ValueError(
+                f"Tried to add cost function {cost_function.name} with type "
+                f"{type(cost_function)} but grouped cost function's type is "
+                f"{type(batch_cost_function)}."
+            )
+
+        if optim_vars:
+            vars_attr_names = batch_cost_function._optim_vars_attr_names
+        else:
+            vars_attr_names = batch_cost_function._aux_vars_attr_names
+
+        for attr_name in vars_attr_names:
+            variable = cast(Variable, getattr(cost_function, attr_name))
+            original_variable = cast(
+                Variable, getattr(original_cost_function, attr_name)
+            )
+
+            if variable.shape != original_variable.shape:
+                raise ValueError(
+                    f"The shape of variable {variable.name} in cost function "
+                    f"{cost_function.name} is {variable.shape} but the "
+                    f"expected shape is {original_variable.shape}."
+                )
+
+            if type(variable) != type(original_variable):
+                raise ValueError(
+                    f"The type of variable {variable.name} in cost function "
+                    f"{cost_function.name} is {type(variable)} but the expected "
+                    f"type is {type(original_variable)}."
+                )
+
+        for attr_name in vars_attr_names:
+            variable = cast(Variable, getattr(cost_function, attr_name))
+            batch_variable = cast(Variable, getattr(batch_cost_function, attr_name))
+            batch_variable.data = torch.cat([batch_variable.data, variable.data], dim=0)
+
     # Adds a cost function to the objective
     # Also adds its optimization variables if they haven't been previously added
     # Throws an error if a new variable has the same name of a previously added
@@ -121,7 +176,8 @@ class Objective:
     # set of objective's variables, they are kept in a separate container.
     # Update method will check if any of these are not registered as
     # cost function variables, and throw a warning.
-    def add(self, cost_function: CostFunction):
+
+    def add(self, cost_function: CostFunction, group_name: Optional[str] = None):
         # adds the cost function if not already present
         if cost_function.name in self.cost_functions:
             if cost_function is not self.cost_functions[cost_function.name]:
@@ -172,6 +228,48 @@ class Objective:
                 )
 
         self.cost_functions_for_weights[cost_function.weight].append(cost_function)
+
+        if group_name is None:
+            group_name = f"ungrouped__{self._ungrouped_ids}"
+            next(self._ungrouped_ids)
+
+        if group_name not in self.grouped_cost_functions:
+            batch_cost_function = cost_function.copy(
+                group_name + "__batch_cost_function"
+            )
+            batch_cost_function.weight = None
+
+            batch_sizes = []
+
+            for var_attr_name in batch_cost_function._optim_vars_attr_names:
+                batch_variable = cast(
+                    Variable, getattr(batch_cost_function, var_attr_name)
+                )
+                batch_variable.name = cost_function.name + "__" + var_attr_name
+                batch_sizes.append(batch_variable.data.shape[0])
+
+            for var_attr_name in batch_cost_function._aux_vars_attr_names:
+                batch_variable = cast(
+                    Variable, getattr(batch_cost_function, var_attr_name)
+                )
+                batch_variable.name = cost_function.name + "__" + var_attr_name
+                batch_sizes.append(batch_variable.data.shape[0])
+
+            unique_batch_sizes = set(batch_sizes)
+
+            if len(unique_batch_sizes) != 1:
+                raise ValueError("Provided cost function can not be batched.")
+
+            self.grouped_cost_functions[group_name] = (
+                batch_cost_function,
+                [cost_function],
+            )
+        else:
+            self._add_grouped_cost_function_variables(cost_function, group_name, True)
+            self._add_grouped_cost_function_variables(cost_function, group_name, False)
+            self.grouped_cost_functions[group_name][1].append(cost_function)
+
+        self.group_names_for_cost_functions[cost_function.name] = group_name
 
         if self.optim_vars.keys() & self.aux_vars.keys():
             raise ValueError(
@@ -264,6 +362,35 @@ class Objective:
                 )
                 del self.cost_functions_for_weights[cost_weight]
 
+            group_name = self.group_names_for_cost_functions[name]
+            batch_cost_function, cost_functions = self.grouped_cost_functions[
+                group_name
+            ]
+
+            cost_fn_idx = cost_functions.index(cost_function)
+            del cost_functions[cost_fn_idx]
+
+            if len(cost_functions) == 0:
+                del self.grouped_cost_functions[group_name]
+            else:
+                for var_name in batch_cost_function._optim_vars_attr_names:
+                    var = cast(Variable, getattr(cost_function, var_name))
+                    var_data = [
+                        cast(Variable, getattr(cost_function, var_name)).data
+                        for cost_function in cost_functions
+                    ]
+                    var.data = torch.cat(var_data, dim=0)
+
+                for var_name in batch_cost_function._aux_vars_attr_names:
+                    var = cast(Variable, getattr(cost_function, var_name))
+                    var_data = [
+                        cast(Variable, getattr(cost_function, var_name)).data
+                        for cost_function in cost_functions
+                    ]
+                    var.data = torch.cat(var_data, dim=0)
+
+            del self.group_names_for_cost_functions[name]
+
             # finally, delete the cost function
             del self.cost_functions[name]
         else:
@@ -352,11 +479,16 @@ class Objective:
             device=self.device, dtype=self.dtype
         )
         pos = 0
-        for cost_function in self.cost_functions.values():
-            error_vector[
-                :, pos : pos + cost_function.dim()
-            ] = cost_function.weighted_error()
-            pos += cost_function.dim()
+        for batch_cost_function, cost_functions in self.grouped_cost_functions.values():
+            batch_errors = batch_cost_function.weighted_error()
+            # TODO: Implement FuncTorch
+            batch_pos = 0
+            for cost_function in cost_functions:
+                weighted_error = batch_errors[batch_pos : batch_pos + self.batch_size]
+                batch_pos += self.batch_size
+                error_vector[:, pos : pos + cost_function.dim()] = weighted_error
+                pos += cost_function.dim()
+
         if not also_update:
             self.update(old_data)
         return error_vector
@@ -426,6 +558,54 @@ class Objective:
         memo[id(self)] = the_copy
         return the_copy
 
+    def consolidate_group_batches(self, only_optim_vars: bool = False):
+        # Broadcast data with batch size 1
+        for var_list in [self.optim_vars.values(), self.aux_vars.values()]:
+            for var in var_list:
+                if var.data.shape[0] == 1:
+                    shape = (self.batch_size,) + (-1,) * len(var.data.shape[1:])
+                    var.update(var.data.expand(shape))
+
+        # Update grouped cost functions for batch processing
+        for group_name, (
+            batch_cost_function,
+            cost_functions,
+        ) in self.grouped_cost_functions.items():
+            for var_attr_name in batch_cost_function._optim_vars_attr_names:
+                batch_variable = cast(
+                    Variable, getattr(batch_cost_function, var_attr_name)
+                )
+                batch_variable_data = [
+                    cast(Variable, getattr(cost_function, var_attr_name)).data
+                    for cost_function in cost_functions
+                ]
+                batch_variable.data = torch.cat(batch_variable_data, dim=0)
+
+                if batch_variable.shape[0] != len(cost_functions) * self.batch_size:
+                    raise ValueError(
+                        f"Provided data for {var_attr_name} in grouped cost function "
+                        f"{group_name} can not be batched."
+                    )
+
+            if only_optim_vars:
+                continue
+
+            for var_attr_name in batch_cost_function._aux_vars_attr_names:
+                batch_variable = cast(
+                    Variable, getattr(batch_cost_function, var_attr_name)
+                )
+                batch_variable_data = [
+                    cast(Variable, getattr(cost_function, var_attr_name)).data
+                    for cost_function in cost_functions
+                ]
+                batch_variable.data = torch.cat(batch_variable_data, dim=0)
+
+                if batch_variable.shape[0] != len(cost_functions) * self.batch_size:
+                    raise ValueError(
+                        f"Provided data for {var_attr_name} in grouped cost function "
+                        f"{group_name} can not be batched."
+                    )
+
     def update(self, input_data: Optional[Dict[str, torch.Tensor]] = None):
         self._batch_size = None
 
@@ -470,6 +650,8 @@ class Objective:
         batch_sizes = [v.data.shape[0] for v in self.optim_vars.values()]
         batch_sizes.extend([v.data.shape[0] for v in self.aux_vars.values()])
         self._batch_size = _get_batch_size(batch_sizes)
+
+        self.consolidate_group_batches()
 
     # iterates over cost functions
     def __iter__(self):

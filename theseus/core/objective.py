@@ -436,6 +436,39 @@ class Objective:
         memo[id(self)] = the_copy
         return the_copy
 
+    def update_variables(
+        self,
+        input_data: Optional[Dict[str, torch.Tensor]] = None,
+        keep_batch: bool = False,
+    ):
+        input_data = input_data or {}
+        for var_name, data in input_data.items():
+            if data.ndim < 2:
+                raise ValueError(
+                    f"Input data tensors must have a batch dimension and "
+                    f"one ore more data dimensions, but data.ndim={data.ndim} for "
+                    f"tensor with name {var_name}."
+                )
+            if var_name in self.optim_vars:
+                self.optim_vars[var_name].update(data, keep_batch=keep_batch)
+            elif var_name in self.aux_vars:
+                self.aux_vars[var_name].update(data, keep_batch=keep_batch)
+            elif var_name in self.cost_weight_optim_vars:
+                self.cost_weight_optim_vars[var_name].update(
+                    data, keep_batch=keep_batch
+                )
+                warnings.warn(
+                    "Updated a variable declared as optimization, but it is "
+                    "only associated to cost weights and not to any cost functions. "
+                    "Theseus optimizers will only update optimization variables "
+                    "that are associated to one or more cost functions."
+                )
+            else:
+                warnings.warn(
+                    f"Attempted to update a tensor with name {var_name}, "
+                    "which is not associated to any variable in the objective."
+                )
+
     def setup(self, input_data: Optional[Dict[str, torch.Tensor]] = None):
         self._batch_size = None
 
@@ -450,31 +483,7 @@ class Objective:
                     return max_bs
             raise ValueError("Provided data tensors must be broadcastable.")
 
-        input_data = input_data or {}
-        for var_name, data in input_data.items():
-            if data.ndim < 2:
-                raise ValueError(
-                    f"Input data tensors must have a batch dimension and "
-                    f"one ore more data dimensions, but data.ndim={data.ndim} for "
-                    f"tensor with name {var_name}."
-                )
-            if var_name in self.optim_vars:
-                self.optim_vars[var_name].update(data)
-            elif var_name in self.aux_vars:
-                self.aux_vars[var_name].update(data)
-            elif var_name in self.cost_weight_optim_vars:
-                self.cost_weight_optim_vars[var_name].update(data)
-                warnings.warn(
-                    "Updated a variable declared as optimization, but it is "
-                    "only associated to cost weights and not to any cost functions. "
-                    "Theseus optimizers will only update optimization variables "
-                    "that are associated to one or more cost functions."
-                )
-            else:
-                warnings.warn(
-                    f"Attempted to update a tensor with name {var_name}, "
-                    "which is not associated to any variable in the objective."
-                )
+        self.update_variables(input_data=input_data, keep_batch=False)
 
         # Check that the batch size of all data is consistent after update
         batch_sizes = [v.data.shape[0] for v in self.optim_vars.values()]
@@ -484,31 +493,7 @@ class Objective:
 
     def update(self, input_data: Optional[Dict[str, torch.Tensor]] = None):
         if self.is_setup:
-            input_data = input_data or {}
-            for var_name, data in input_data.items():
-                if data.ndim < 2:
-                    raise ValueError(
-                        f"Input data tensors must have a batch dimension and "
-                        f"one ore more data dimensions, but data.ndim={data.ndim} for "
-                        f"tensor with name {var_name}."
-                    )
-                if var_name in self.optim_vars:
-                    self.optim_vars[var_name].update(data, keep_shape=True)
-                elif var_name in self.aux_vars:
-                    self.aux_vars[var_name].update(data, keep_shape=True)
-                elif var_name in self.cost_weight_optim_vars:
-                    self.cost_weight_optim_vars[var_name].update(data, keep_shape=True)
-                    warnings.warn(
-                        "Updated a variable declared as optimization, but it is "
-                        "only associated to cost weights and not to any cost functions. "
-                        "Theseus optimizers will only update optimization variables "
-                        "that are associated to one or more cost functions."
-                    )
-                else:
-                    warnings.warn(
-                        f"Attempted to update a tensor with name {var_name}, "
-                        "which is not associated to any variable in the objective."
-                    )
+            self.update_variables(input_data=input_data, keep_batch=True)
         else:
             self.setup(input_data)
 

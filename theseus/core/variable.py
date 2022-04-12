@@ -34,12 +34,12 @@ class Variable:
 
     # batch_ignore_mask is a boolean list where batch_ignore_mask[i] = 1 means
     # variable[i] will *not* be updated
-    # keep_shape is a boolean indicating whether to check self.data.shape = data.shape
+    # keep_batch is a boolean indicating whether to check self.data.shape = data.shape
     def update(
         self,
         data: Union[torch.Tensor, "Variable"],
         batch_ignore_mask: Optional[torch.Tensor] = None,
-        keep_shape: Optional[bool] = False,
+        keep_batch: Optional[bool] = False,
     ):
         if isinstance(data, Variable):
             data = data.data
@@ -52,6 +52,14 @@ class Variable:
                 f"incompatible with original tensor shape. Given {data.shape[1:]}. "
                 f"Expected: {self.data.shape[1:]}"
             )
+
+        if keep_batch and data.shape[0] != self.data.shape[0]:
+            raise ValueError(
+                f"Tried to update tensor {self.name} with data "
+                f"incompatible with original tensor batch_size. Given {data.shape[0]}. "
+                f"Expected: {self.data.shape[0]}"
+            )
+
         if data.dtype != self.dtype:
             raise ValueError(
                 f"Tried to update used tensor of dtype {data.dtype} but Variable "
@@ -61,11 +69,6 @@ class Variable:
             mask_shape = (-1,) + (1,) * (data.ndim - 1)
             self.data = torch.where(batch_ignore_mask.view(mask_shape), self.data, data)
         else:
-            if keep_shape and self.data.shape != data.shape:
-                raise ValueError(
-                    f"Provided data.shape is {data.shape} and different "
-                    f"from self.data.shape {self.data.shape}."
-                )
             self.data = data
 
     def __repr__(self) -> str:

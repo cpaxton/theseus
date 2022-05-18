@@ -49,6 +49,7 @@ struct CusolverLUSolver {
     torch::Tensor A_colInd;
     torch::Tensor P;
     torch::Tensor Q;
+	at::Tensor temp;
     cusolverRfHandle_t cusolverRfH = nullptr;
 
 	// stores the id of the factor stored (to enable workaround related to reusing contexts...)
@@ -242,6 +243,9 @@ CusolverLUSolver::CusolverLUSolver(int batchSize,
 
     P = P_cpu.cuda();
     Q = Q_cpu.cuda();
+
+    temp = torch::empty(numRows * 2 * factoredBatchSize,
+                        torch::TensorOptions(torch::kDouble).device(A_rowPtr.device()));
 }
 
 std::vector<int> CusolverLUSolver::factor(const torch::Tensor& A_val) {
@@ -299,8 +303,6 @@ void CusolverLUSolver::solve(const torch::Tensor& b) {
         pB_array_cpu[i] = pB + numRows * i;
     }
     at::Tensor b_array = b_array_cpu.cuda();
-    at::Tensor temp = torch::empty(numRows * 2 * factoredBatchSize,
-                                   torch::TensorOptions(torch::kDouble).device(A_rowPtr.device()));
 
     CUSOLVER_CHECK(cusolverRfBatchSolve(cusolverRfH,
                                         P.data_ptr<int>(), Q.data_ptr<int>(),

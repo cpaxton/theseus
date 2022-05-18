@@ -3,6 +3,8 @@
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 
+import gc
+
 import logging
 
 import os
@@ -228,6 +230,8 @@ def run(
         with torch.no_grad():
             pose_loss_ref = pose_loss(pg_batch.poses, pg_batch.gt_poses)
 
+        torch.cuda.empty_cache()
+        gc.collect()
         start_event.record()
         torch.cuda.reset_peak_memory_stats()
         pr.enable()

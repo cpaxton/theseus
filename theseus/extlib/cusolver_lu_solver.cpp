@@ -244,8 +244,8 @@ CusolverLUSolver::CusolverLUSolver(int batchSize,
     P = P_cpu.cuda();
     Q = Q_cpu.cuda();
 
-    temp = torch::empty(numRows * 2 * factoredBatchSize,
-                        torch::TensorOptions(torch::kDouble).device(A_rowPtr.device()));
+    temp = torch::empty(numRows * 2 * batchSize,
+                        torch::TensorOptions(torch::kDouble).device(P.device()));
 }
 
 std::vector<int> CusolverLUSolver::factor(const torch::Tensor& A_val) {

@@ -7,10 +7,14 @@ from .core import (
     CostFunction,
     CostWeight,
     DiagonalCostWeight,
-    AutoDiffCostFunction,
     Objective,
     ScaleCostWeight,
     Variable,
+    Loss,
+    AutoDiffCostFunction,
+    RobustCostFunction,
+    HuberLoss,
+    WelschLoss,
 )
 from .geometry import (
     SE2,
